@@ -1,0 +1,33 @@
+# Lockbox - Root .gitignore
+
+# App-specific ignores (delegated to app/.gitignore)
+# These are duplicated here for clarity
+
+# Environment variables
+.env
+.env*.local
+
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Temporary files
+*.tmp
+*.temp
