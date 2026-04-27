@@ -2,6 +2,7 @@
   "expo": {
     "name": "Lockbox",
     "slug": "lockbox",
+    "scheme": "lockbox",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -28,7 +29,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-web-browser"
-    ]
+      "expo-web-browser",
+      "@react-native-google-signin/google-signin"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "9086a703-0474-4e19-86dd-9488969ab146"
+      }
+    }
   }
 }
