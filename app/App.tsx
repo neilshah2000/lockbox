@@ -13,6 +13,8 @@ import HomeScreen from './src/screens/HomeScreen';
 import PairingScreen from './src/screens/PairingScreen';
 import GenerateCodeScreen from './src/screens/GenerateCodeScreen';
 import EnterCodeScreen from './src/screens/EnterCodeScreen';
+import StartSessionScreen from './src/screens/StartSessionScreen';
+import ActiveSessionScreen from './src/screens/ActiveSessionScreen';
 import colors from './src/constants/colors';
 
 const Stack = createNativeStackNavigator<MainStackParamList>();
@@ -20,13 +22,13 @@ const Stack = createNativeStackNavigator<MainStackParamList>();
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [partnerId, setPartnerId] = useState('');
+  const [partnerName, setPartnerName] = useState('');
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
       try {
-        if (u) {
-          await saveUser(u);
-        }
+        if (u) await saveUser(u);
       } catch (e) {
         console.error('Auth/saveUser error:', e);
       }
@@ -51,7 +53,15 @@ export default function App() {
       <SafeAreaView style={styles.container}>
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="Home">
-            {() => <HomeScreen user={user} />}
+            {() => (
+              <HomeScreen
+                user={user}
+                onPartnerLoaded={(id, name) => {
+                  setPartnerId(id);
+                  setPartnerName(name);
+                }}
+              />
+            )}
           </Stack.Screen>
           <Stack.Screen
             name="Pairing"
@@ -68,6 +78,18 @@ export default function App() {
             component={EnterCodeScreen}
             options={{ headerShown: true, title: 'Enter code', headerTintColor: colors.primary }}
           />
+          <Stack.Screen
+            name="StartSession"
+            options={{ headerShown: true, title: 'Start session', headerTintColor: colors.primary }}
+          >
+            {() => <StartSessionScreen partnerId={partnerId} partnerName={partnerName} />}
+          </Stack.Screen>
+          <Stack.Screen
+            name="ActiveSession"
+            options={{ headerShown: false, gestureEnabled: false }}
+          >
+            {({ route }) => <ActiveSessionScreen sessionId={route.params.sessionId} />}
+          </Stack.Screen>
         </Stack.Navigator>
         <StatusBar style="dark" />
       </SafeAreaView>

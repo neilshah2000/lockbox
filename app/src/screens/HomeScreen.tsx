@@ -7,6 +7,7 @@ import { ref, onValue } from 'firebase/database';
 import { auth, database } from '../services/firebase';
 import { unpair } from '../services/pairingService';
 import { getUser } from '../services/userService';
+import { acceptSession, declineSession } from '../services/sessionService';
 import { User as LockboxUser } from '../types/user.types';
 import { MainStackParamList } from '../types/navigation.types';
 import colors from '../constants/colors';
@@ -15,12 +16,14 @@ type Nav = NativeStackNavigationProp<MainStackParamList, 'Home'>;
 
 interface Props {
   user: User;
+  onPartnerLoaded?: (partnerId: string, partnerName: string) => void;
 }
 
-export default function HomeScreen({ user }: Props) {
+export default function HomeScreen({ user, onPartnerLoaded }: Props) {
   const navigation = useNavigation<Nav>();
   const [lockboxUser, setLockboxUser] = useState<LockboxUser | null>(null);
   const [partner, setPartner] = useState<LockboxUser | null>(null);
+  const [pendingSessionInitiator, setPendingSessionInitiator] = useState<string>('');
 
   useEffect(() => {
     const userRef = ref(database, `users/${user.uid}`);
@@ -28,11 +31,34 @@ export default function HomeScreen({ user }: Props) {
       if (!snapshot.exists()) return;
       const data = snapshot.val() as LockboxUser;
       setLockboxUser(data);
+
       if (data.partnerId) {
         const partnerData = await getUser(data.partnerId);
         setPartner(partnerData);
+        if (partnerData) onPartnerLoaded?.(data.partnerId, partnerData.displayName);
       } else {
         setPartner(null);
+      }
+
+      if (data.activeSessionId) {
+        navigation.navigate('ActiveSession', { sessionId: data.activeSessionId });
+      }
+
+      if (data.pendingSessionId) {
+        // Find out who sent it (the other partner)
+        const sessionSnap = await new Promise<any>((resolve) => {
+          const unsub = onValue(
+            ref(database, `sessions/${data.pendingSessionId}`),
+            (s) => { unsub(); resolve(s); }
+          );
+        });
+        if (sessionSnap.exists()) {
+          const sessionData = sessionSnap.val();
+          const initiatorData = await getUser(sessionData.partner1Id);
+          setPendingSessionInitiator(initiatorData?.displayName ?? 'Your partner');
+        }
+      } else {
+        setPendingSessionInitiator('');
       }
     });
   }, [user.uid]);
@@ -56,7 +82,18 @@ export default function HomeScreen({ user }: Props) {
     );
   };
 
+  const handleAcceptSession = async () => {
+    if (!lockboxUser?.pendingSessionId) return;
+    await acceptSession(lockboxUser.pendingSessionId);
+  };
+
+  const handleDeclineSession = async () => {
+    if (!lockboxUser?.pendingSessionId) return;
+    await declineSession(lockboxUser.pendingSessionId, user.uid);
+  };
+
   const isPaired = !!lockboxUser?.partnerId;
+  const hasPendingInvite = !!lockboxUser?.pendingSessionId;
 
   return (
     <View style={styles.container}>
@@ -70,30 +107,56 @@ export default function HomeScreen({ user }: Props) {
         <Text style={styles.email}>{user.email}</Text>
       </View>
 
-      <View style={styles.statusCard}>
-        {isPaired && partner ? (
-          <>
-            <Text style={styles.statusIcon}>🔗</Text>
-            <Text style={styles.statusTitle}>Paired with {partner.displayName}</Text>
-            <Text style={styles.statusSub}>You're ready to start a lock session</Text>
-            <TouchableOpacity style={styles.unpairButton} onPress={handleUnpair}>
-              <Text style={styles.unpairText}>Unpair</Text>
+      {hasPendingInvite ? (
+        <View style={styles.inviteCard}>
+          <Text style={styles.inviteIcon}>🔒</Text>
+          <Text style={styles.inviteTitle}>
+            {pendingSessionInitiator} wants to start a session
+          </Text>
+          <Text style={styles.inviteSub}>Put your phones down together</Text>
+          <View style={styles.inviteButtons}>
+            <TouchableOpacity style={styles.declineBtn} onPress={handleDeclineSession}>
+              <Text style={styles.declineBtnText}>Decline</Text>
             </TouchableOpacity>
-          </>
-        ) : (
-          <>
-            <Text style={styles.statusIcon}>🔗</Text>
-            <Text style={styles.statusTitle}>Not paired</Text>
-            <Text style={styles.statusSub}>Pair with your partner to start locking sessions</Text>
-            <TouchableOpacity
-              style={styles.pairButton}
-              onPress={() => navigation.navigate('Pairing')}
-            >
-              <Text style={styles.pairButtonText}>Pair with partner</Text>
+            <TouchableOpacity style={styles.acceptBtn} onPress={handleAcceptSession}>
+              <Text style={styles.acceptBtnText}>Accept</Text>
             </TouchableOpacity>
-          </>
-        )}
-      </View>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.statusCard}>
+          {isPaired && partner ? (
+            <>
+              <Text style={styles.statusIcon}>🔗</Text>
+              <Text style={styles.statusTitle}>Paired with {partner.displayName}</Text>
+              <Text style={styles.statusSub}>Ready to lock in together</Text>
+              <TouchableOpacity
+                style={styles.startSessionBtn}
+                onPress={() =>
+                  navigation.navigate('StartSession')
+                }
+              >
+                <Text style={styles.startSessionText}>Start session</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.unpairButton} onPress={handleUnpair}>
+                <Text style={styles.unpairText}>Unpair</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={styles.statusIcon}>🔗</Text>
+              <Text style={styles.statusTitle}>Not paired</Text>
+              <Text style={styles.statusSub}>Pair with your partner to start locking sessions</Text>
+              <TouchableOpacity
+                style={styles.pairButton}
+                onPress={() => navigation.navigate('Pairing')}
+              >
+                <Text style={styles.pairButtonText}>Pair with partner</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      )}
 
       <TouchableOpacity style={styles.signOutButton} onPress={() => signOut(auth)}>
         <Text style={styles.signOutText}>Sign out</Text>
@@ -149,6 +212,67 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     marginBottom: 'auto',
   },
+  inviteCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    width: '100%',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    marginBottom: 'auto',
+    borderWidth: 2,
+    borderColor: colors.primary,
+  },
+  inviteIcon: {
+    fontSize: 40,
+    marginBottom: 12,
+  },
+  inviteTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  inviteSub: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginBottom: 20,
+  },
+  inviteButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  declineBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+  },
+  declineBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  acceptBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+  },
+  acceptBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.surface,
+  },
   statusIcon: {
     fontSize: 40,
     marginBottom: 12,
@@ -164,6 +288,18 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
     marginBottom: 20,
+  },
+  startSessionBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    marginBottom: 12,
+  },
+  startSessionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.surface,
   },
   pairButton: {
     backgroundColor: colors.primary,

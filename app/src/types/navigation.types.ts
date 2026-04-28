@@ -3,4 +3,6 @@ export type MainStackParamList = {
   Pairing: undefined;
   GenerateCode: { code: string; expiresAt: number };
   EnterCode: undefined;
+  StartSession: undefined;
+  ActiveSession: { sessionId: string };
 };

@@ -6,6 +6,8 @@ export interface User {
   displayName: string;
   photoURL: string | null;
   partnerId: string | null;
+  pendingSessionId: string | null;
+  activeSessionId: string | null;
   fcmToken: string | null;
   createdAt: number;
   lastOnline: number;
