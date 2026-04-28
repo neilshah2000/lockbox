@@ -25,7 +25,6 @@ export default function App() {
     return onAuthStateChanged(auth, async (u) => {
       try {
         if (u) {
-          console.log('Auth user:', u.uid, u.email);
           await saveUser(u);
         }
       } catch (e) {

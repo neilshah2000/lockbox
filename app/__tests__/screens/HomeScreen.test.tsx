@@ -10,11 +10,11 @@ jest.mock('firebase/auth', () => ({
   signOut: jest.fn().mockResolvedValue({}),
 }));
 
-const mockOnValue = jest.fn(() => jest.fn());
+const mockOnValue = jest.fn((_ref: any, _cb: any) => jest.fn());
 
 jest.mock('firebase/database', () => ({
   ref: jest.fn(),
-  onValue: (...args: any[]) => mockOnValue(...args),
+  onValue: (ref: any, cb: any) => mockOnValue(ref, cb),
 }));
 
 jest.mock('../../src/services/firebase', () => ({
@@ -74,10 +74,10 @@ describe('HomeScreen', () => {
     const { getUser } = require('../../src/services/userService');
     getUser.mockResolvedValueOnce({ displayName: 'Jane', photoURL: null });
 
-    mockOnValue.mockImplementationOnce((_ref: any, callback: any) => {
+    mockOnValue.mockImplementationOnce(((_ref: any, callback: any) => {
       callback({ exists: () => true, val: () => ({ partnerId: 'partner-456' }) });
       return jest.fn();
-    });
+    }) as any);
 
     const { findByText } = render(<HomeScreen user={mockUser as any} />);
     expect(await findByText('Paired with Jane')).toBeTruthy();
@@ -87,10 +87,10 @@ describe('HomeScreen', () => {
     const { getUser } = require('../../src/services/userService');
     getUser.mockResolvedValueOnce({ displayName: 'Jane', photoURL: null });
 
-    mockOnValue.mockImplementationOnce((_ref: any, callback: any) => {
+    mockOnValue.mockImplementationOnce(((_ref: any, callback: any) => {
       callback({ exists: () => true, val: () => ({ partnerId: 'partner-456' }) });
       return jest.fn();
-    });
+    }) as any);
 
     const { findByText } = render(<HomeScreen user={mockUser as any} />);
     expect(await findByText('Unpair')).toBeTruthy();

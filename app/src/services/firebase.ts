@@ -1,6 +1,9 @@
-import { initializeApp } from 'firebase/app';
-import { initializeAuth, inMemoryPersistence } from 'firebase/auth';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeAuth, getAuth, Auth } from 'firebase/auth';
+// @ts-ignore - getReactNativePersistence is in the RN entry point of @firebase/auth
+import { getReactNativePersistence } from '@firebase/auth';
 import { getDatabase } from 'firebase/database';
+import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || '',
@@ -12,9 +15,17 @@ const firebaseConfig = {
   databaseURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL || '',
 };
 
-const app = initializeApp(firebaseConfig);
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-export const auth = initializeAuth(app, { persistence: inMemoryPersistence });
+let auth: Auth;
+try {
+  auth = initializeAuth(app, { persistence: getReactNativePersistence(ReactNativeAsyncStorage) });
+} catch (e) {
+  auth = getAuth(app);
+}
+
+export { auth };
+
 export const database = getDatabase(app);
 
 export default app;
