@@ -23,6 +23,7 @@ export default function LoginScreen() {
       const credential = GoogleAuthProvider.credential(idToken);
       await signInWithCredential(auth, credential);
     } catch (e: any) {
+      console.error('Sign in error:', JSON.stringify(e), e.message, e.code);
       setError(e.message || 'Sign in failed');
     } finally {
       setLoading(false);

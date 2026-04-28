@@ -13,6 +13,9 @@
     "preset": "react-native",
     "setupFilesAfterEnv": [
       "@testing-library/jest-native/extend-expect"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!(@react-native|react-native|@react-navigation|firebase|@firebase|expo|@expo|@react-native-google-signin)/)"
     ]
   },
   "dependencies": {
