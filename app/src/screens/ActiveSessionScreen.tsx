@@ -12,6 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ref, onValue, DataSnapshot } from 'firebase/database';
 import { auth, database } from '../services/firebase';
+import { isScreenOff, addScreenOffListener, addUserPresentListener, addLogListener } from 'keyguard';
 import {
   cancelSession,
   completeSession,
@@ -43,17 +44,15 @@ function formatTime(ms: number): string {
 
 export default function ActiveSessionScreen({ sessionId }: Props) {
   const navigation = useNavigation<Nav>();
-  const [session, setSession] = useState<Session | null>(null);
-  const [partnerName, setPartnerName] = useState('');
-  const [timeLeft, setTimeLeft] = useState(0);
-  const [partnerLeft, setPartnerLeft] = useState(false);
-  const [iLeft, setILeft] = useState(false);
-  const serverOffset = useRef(0);
+  const [session, setSession] = useState<Session | null>(null);       // full session object from Firebase
+  const [partnerName, setPartnerName] = useState('');                 // partner's display name, fetched once
+  const [timeLeft, setTimeLeft] = useState(0);                        // ms remaining, ticked down every second
+  const [partnerLeft, setPartnerLeft] = useState(false);              // partner has an unresolved violation
+  const [iLeft, setILeft] = useState(false);                          // I have an unresolved violation
+  const serverOffset = useRef(0);                                      // Firebase clock offset so both phones agree on timeLeft
 
-  const backgroundedAt = useRef<number | null>(null);
-  const currentViolationId = useRef<string | null>(null);
-  const sessionRef = useRef<Session | null>(null);
-  const completedRef = useRef(false);
+  const sessionRef = useRef<Session | null>(null);                    // mirror of session for use inside event handlers (avoids stale closures)
+  const completedRef = useRef(false);                                  // prevents completeSession / goBack firing twice
 
   // Keep server clock offset so both phones compute identical timeLeft
   useEffect(() => {
@@ -90,7 +89,7 @@ export default function ActiveSessionScreen({ sessionId }: Props) {
 
       // If we have an unresolved violation but the app is foregrounded (e.g. after a restart),
       // resolve it now — the normal AppState handler never fired in that case
-      if (myActiveViolation && !currentViolationId.current && AppState.currentState === 'active') {
+      if (myActiveViolation && AppState.currentState === 'active') {
         const userKey = isPartner1 ? 'partner1' : 'partner2';
         const duration = Math.round((Date.now() - myActiveViolation.timestamp) / 1000);
         resolveViolation(sessionId, userKey, myActiveViolation.id, duration);
@@ -127,32 +126,95 @@ export default function ActiveSessionScreen({ sessionId }: Props) {
     return () => clearInterval(interval);
   }, [sessionId]);
 
+  // Forward native Kotlin logs to Metro console
+  useEffect(() => {
+    const sub = addLogListener((message) => console.log(message));
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    const sub = addScreenOffListener(async () => {
+      console.log(`[ScreenOff] Screen locked — AppState=${AppState.currentState}`);
+      if (AppState.currentState !== 'background') return;
+      const s = sessionRef.current;
+      if (!s || s.status !== 'active') return;
+      const uid = auth.currentUser?.uid;
+      if (!uid) return;
+      const isPartner1 = s.partner1Id === uid;
+      const myViolations = isPartner1 ? s.violations?.partner1 : s.violations?.partner2;
+      const v = Object.values(myViolations ?? {}).find(v => !v.returned);
+      if (!v) return;
+      const userKey = isPartner1 ? 'partner1' : 'partner2';
+      const duration = Math.round((Date.now() - v.timestamp) / 1000);
+      console.log(`[ScreenOff] Resolving violation — user locked screen (${duration}s)`);
+      await resolveViolation(sessionId, userKey, v.id, duration);
+    });
+    return () => sub.remove();
+  }, [sessionId]);
+
   // AppState monitoring - detect when user leaves app
   useEffect(() => {
     const handleChange = async (nextState: AppStateStatus) => {
+      console.log(`[AppState] ${nextState}`);
       const s = sessionRef.current;
       if (!s || s.status !== 'active') return;
       const uid = auth.currentUser?.uid;
       if (!uid) return;
       const userKey = s.partner1Id === uid ? 'partner1' : 'partner2';
 
-      if (nextState === 'background' || nextState === 'inactive') {
-        backgroundedAt.current = Date.now();
-        const violationId = await recordViolation(sessionId, userKey);
-        currentViolationId.current = violationId;
-      } else if (nextState === 'active' && backgroundedAt.current !== null) {
-        const duration = Math.round((Date.now() - backgroundedAt.current) / 1000);
-        if (currentViolationId.current) {
-          await resolveViolation(sessionId, userKey, currentViolationId.current, duration);
+      if (nextState === 'background') {
+        if (await isScreenOff()) return;
+        console.log('[AppState] User left app');
+        await recordViolation(sessionId, userKey);
+      } else if (nextState === 'active') {
+        const isPartner1 = s.partner1Id === uid;
+        const myViolations = isPartner1 ? s.violations?.partner1 : s.violations?.partner2;
+        const v = Object.values(myViolations ?? {}).find(v => !v.returned);
+        if (v) {
+          const duration = Math.round((Date.now() - v.timestamp) / 1000);
+          console.log(`[AppState] User returned (${duration}s)`);
+          await resolveViolation(sessionId, userKey, v.id, duration);
         }
-        backgroundedAt.current = null;
-        currentViolationId.current = null;
       }
     };
 
     const sub = AppState.addEventListener('change', handleChange);
     return () => sub.remove();
   }, [sessionId]);
+
+  // Detect unlock-to-another-app (e.g. tapping a notification from the lock screen)
+  useEffect(() => {
+    const sub = addUserPresentListener(() => {
+      console.log(`[Keyguard] ACTION_USER_PRESENT — AppState=${AppState.currentState}`);
+      setTimeout(async () => {
+        console.log(`[Keyguard] 500ms later — AppState=${AppState.currentState}`);
+        if (AppState.currentState === 'active') {
+          console.log('[Keyguard] User returned to Lockbox — no violation');
+          return;
+        }
+        const s = sessionRef.current;
+        if (!s || s.status !== 'active') return;
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
+        const isPartner1 = s.partner1Id === uid;
+        const myViolations = isPartner1 ? s.violations?.partner1 : s.violations?.partner2;
+        const hasActiveViolation = Object.values(myViolations ?? {}).some(v => !v.returned);
+        if (hasActiveViolation) return;
+        const userKey = isPartner1 ? 'partner1' : 'partner2';
+        console.log('[Keyguard] User unlocked to another app — recording violation');
+        await recordViolation(sessionId, userKey);
+      }, 500);
+    });
+    return () => sub.remove();
+  }, [sessionId]);
+
+  useEffect(() => {
+    return navigation.addListener('beforeRemove', (e) => {
+      if (completedRef.current) return;
+      e.preventDefault();
+      handleCancel();
+    });
+  }, [navigation]);
 
   const handleCancel = () => {
     Alert.alert('End session early?', 'This will cancel the session for both of you.', [
